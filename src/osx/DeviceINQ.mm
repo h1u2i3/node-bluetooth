@@ -118,7 +118,7 @@ void DeviceINQ::EIO_AfterSdpSearch(uv_work_t *req) {
     baton = NULL;
 }
 
-void DeviceINQ::Init(Handle<Object> target) {
+void DeviceINQ::Init(Local<Object> target) {
     Nan::HandleScope scope;
 
     Local<FunctionTemplate> t = Nan::New<FunctionTemplate>(New);
@@ -126,15 +126,14 @@ void DeviceINQ::Init(Handle<Object> target) {
     t->InstanceTemplate()->SetInternalFieldCount(1);
     t->SetClassName(Nan::New("DeviceINQ").ToLocalChecked());
 
+    Isolate *isolate = target->GetIsolate();
+    Local<Context> ctx = isolate->GetCurrentContext();
+
     Nan::SetPrototypeMethod(t, "inquireSync", InquireSync);
     Nan::SetPrototypeMethod(t, "inquire", Inquire);
     Nan::SetPrototypeMethod(t, "findSerialPortChannel", SdpSearch);
     Nan::SetPrototypeMethod(t, "listPairedDevices", ListPairedDevices);
-    target->Set(Nan::New("DeviceINQ").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("DeviceINQ").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("DeviceINQ").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("DeviceINQ").ToLocalChecked(), t->GetFunction());
-
+    target->Set(ctx, Nan::New("DeviceINQ").ToLocalChecked(), t->GetFunction(ctx).ToLocalChecked());
 }
 
 NSArray *DeviceINQ::doInquire() {
@@ -237,16 +236,16 @@ NAN_METHOD(DeviceINQ::InquireSync) {
 NAN_METHOD(DeviceINQ::SdpSearch) {
     const char *usage = "usage: sdpSearchForRFCOMM(address, callback)";
     if (info.Length() != 2) {
-        Nan::ThrowError(usage);
+        return Nan::ThrowError(usage);
     }
 
     if (!info[0]->IsString()) {
-        Nan::ThrowTypeError("First argument should be a string value");
+        return Nan::ThrowTypeError("First argument should be a string value");
     }
-    String::Utf8Value address(info[0]);
+    String::Utf8Value address(info.GetIsolate(), info[0]);
 
     if(!info[1]->IsFunction()) {
-        Nan::ThrowTypeError("Second argument must be a function");
+        return Nan::ThrowTypeError("Second argument must be a function");
     }
     Local<Function> cb = info[1].As<Function>();
 
@@ -322,9 +321,7 @@ NAN_METHOD(DeviceINQ::ListPairedDevices) {
     Local<Value> argv[1] = {
         resultArray
     };
-    cb->Call(Nan::GetCurrentContext()->Global(), 1, argv);
+    cb->Call(Nan::GetCurrentContext(), Nan::GetCurrentContext()->Global(), 1, argv);
 
     return;
 }
-
-

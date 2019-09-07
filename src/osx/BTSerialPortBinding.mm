@@ -78,8 +78,10 @@ void BTSerialPortBinding::EIO_AfterConnect(uv_work_t *req) {
     if (baton->status == 0) {
         baton->cb->Call(0, NULL);
     } else {
+        char msg[80];
+        sprintf(msg, "Cannot connect: %d", baton->status);
         Local<Value> argv[] = {
-            Nan::Error("Cannot connect")
+            Nan::Error(msg)
         };
         baton->ecb->Call(1, argv);
     }
@@ -206,7 +208,7 @@ void BTSerialPortBinding::EIO_AfterRead(uv_work_t *req) {
     baton = NULL;
 }
 
-void BTSerialPortBinding::Init(Handle<Object> target) {
+void BTSerialPortBinding::Init(Local<Object> target) {
     Nan::HandleScope scope;
 
     Local<FunctionTemplate> t = Nan::New<FunctionTemplate>(New);
@@ -214,12 +216,13 @@ void BTSerialPortBinding::Init(Handle<Object> target) {
     t->InstanceTemplate()->SetInternalFieldCount(1);
     t->SetClassName(Nan::New("BTSerialPortBinding").ToLocalChecked());
 
+    Isolate *isolate = target->GetIsolate();
+    Local<Context> ctx = isolate->GetCurrentContext();
+
     Nan::SetPrototypeMethod(t, "write", Write);
     Nan::SetPrototypeMethod(t, "read", Read);
     Nan::SetPrototypeMethod(t, "close", Close);
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
+    target->Set(ctx, Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction(ctx).ToLocalChecked());
 }
 
 BTSerialPortBinding::BTSerialPortBinding() :
@@ -235,14 +238,14 @@ NAN_METHOD(BTSerialPortBinding::New) {
 
     const char *usage = "usage: BTSerialPortBinding(address, channelID, callback, error)";
     if (info.Length() != 4) {
-        Nan::ThrowError(usage);
+        return Nan::ThrowError(usage);
     }
 
-    String::Utf8Value address(info[0]);
+    String::Utf8Value address(info.GetIsolate(), info[0]);
 
-    int channelID = info[1]->Int32Value();
+    int channelID = info[1]->Int32Value(Nan::GetCurrentContext()).ToChecked();
     if (channelID <= 0) {
-        Nan::ThrowTypeError("ChannelID should be a positive int value.");
+        return Nan::ThrowTypeError("ChannelID should be a positive int value.");
     }
 
     BTSerialPortBinding* rfcomm = new BTSerialPortBinding();
@@ -266,13 +269,17 @@ NAN_METHOD(BTSerialPortBinding::New) {
 NAN_METHOD(BTSerialPortBinding::Write) {
     // usage
     if (info.Length() != 3) {
-        Nan::ThrowError("usage: write(buf, address, callback)");
+        return Nan::ThrowError("usage: write(buf, address, callback)");
     }
-
     // buffer
     if(!info[0]->IsObject() || !Buffer::HasInstance(info[0])) {
-        Nan::ThrowTypeError("First argument must be a buffer");
+        return Nan::ThrowTypeError("First argument must be a buffer");
     }
+    // string
+    if (!info[1]->IsString()) {
+        return Nan::ThrowTypeError("Second argument must be a string");
+    }
+
     Local<Object> bufferObject = info[0].As<Object>();
     void* bufferData = Buffer::Data(bufferObject);
     size_t bufferLength = Buffer::Length(bufferObject);
@@ -281,11 +288,11 @@ NAN_METHOD(BTSerialPortBinding::Write) {
     if (!info[1]->IsString()) {
         Nan::ThrowTypeError("Second argument must be a string");
     }
-    String::Utf8Value addressParameter(info[1]);
+    String::Utf8Value addressParameter(info.GetIsolate(), info[1]);
 
     // callback
     if(!info[2]->IsFunction()) {
-        Nan::ThrowTypeError("Third argument must be a function");
+        return Nan::ThrowTypeError("Third argument must be a function");
     }
 
     write_baton_t *baton = new write_baton_t();
@@ -318,15 +325,15 @@ NAN_METHOD(BTSerialPortBinding::Write) {
 
 NAN_METHOD(BTSerialPortBinding::Close) {
     if (info.Length() != 1) {
-        Nan::ThrowError("usage: close(address)");
+        return Nan::ThrowError("usage: close(address)");
     }
 
     if (!info[0]->IsString()) {
-        Nan::ThrowTypeError("Argument should be a string value");
+        return Nan::ThrowTypeError("Argument should be a string value");
     }
 
     //TODO should be a better way to do this...
-    String::Utf8Value addressParameter(info[0]);
+    String::Utf8Value addressParameter(info.GetIsolate(), info[0]);
     char addressArray[32];
     strncpy(addressArray, *addressParameter, 32);
     NSString *address = [NSString stringWithCString:addressArray encoding:NSASCIIStringEncoding];
@@ -339,7 +346,7 @@ NAN_METHOD(BTSerialPortBinding::Close) {
 
 NAN_METHOD(BTSerialPortBinding::Read) {
     if (info.Length() != 1) {
-        Nan::ThrowError("usage: read(callback)");
+        return Nan::ThrowError("usage: read(callback)");
     }
 
     Local<Function> cb = info[0].As<Function>();

@@ -82,10 +82,11 @@ void BTSerialPortBinding::EIO_AfterConnect(uv_work_t *req) {
     if (baton->status == 0) {
         baton->cb->Call(0, NULL);
     } else {
+        char msg[80];
+        sprintf(msg, "Cannot connect: %d", baton->status);
         Local<Value> argv[] = {
-            Nan::Error("Cannot connect")
+            Nan::Error(msg)
         };
-
         baton->ecb->Call(1, argv);
     }
 
@@ -105,15 +106,22 @@ void BTSerialPortBinding::EIO_Write(uv_work_t *req) {
     write_baton_t *data = static_cast<write_baton_t*>(queuedWrite->baton);
 
     BTSerialPortBinding* rfcomm = data->rfcomm;
+    int bytesToSend = data->bufferLength;
+    data->result = 0;
 
-    if (rfcomm->s == 0) {
+    if (rfcomm->s != 0) {
+        do {
+            int bytesSent = write(rfcomm->s, data->bufferData+data->result, bytesToSend);
+            if (bytesSent >= 0) {
+                bytesToSend -= bytesSent;
+                data->result += bytesSent;
+            } else {
+                sprintf(data->errorString, "Writing attempt was unsuccessful");
+                break;
+            }
+        } while (bytesToSend > 0);
+    } else {
         sprintf(data->errorString, "Attempting to write to a closed connection");
-    }
-
-    data->result = write(rfcomm->s, data->bufferData, data->bufferLength);
-
-    if (data->result != data->bufferLength) {
-        sprintf(data->errorString, "Writing attempt was unsuccessful");
     }
 }
 
@@ -196,7 +204,7 @@ void BTSerialPortBinding::EIO_AfterRead(uv_work_t *req) {
     } else {
         Local<Object> globalObj = Nan::GetCurrentContext()->Global();
         Local<Function> bufferConstructor = Local<Function>::Cast(globalObj->Get(Nan::New("Buffer").ToLocalChecked()));
-        Handle<Value> constructorArgs[1] = { Nan::New<v8::Integer>(baton->size) };
+        Local<Value> constructorArgs[1] = { Nan::New<v8::Integer>(baton->size) };
         Local<Object> resultBuffer = Nan::NewInstance(bufferConstructor, 1, constructorArgs).ToLocalChecked();
         memcpy(Buffer::Data(resultBuffer), baton->result, baton->size);
 
@@ -217,7 +225,7 @@ void BTSerialPortBinding::EIO_AfterRead(uv_work_t *req) {
     baton = NULL;
 }
 
-void BTSerialPortBinding::Init(Handle<Object> target) {
+void BTSerialPortBinding::Init(Local<Object> target) {
     Nan::HandleScope scope;
 
     Local<FunctionTemplate> t = Nan::New<FunctionTemplate>(New);
@@ -225,12 +233,13 @@ void BTSerialPortBinding::Init(Handle<Object> target) {
     t->InstanceTemplate()->SetInternalFieldCount(1);
     t->SetClassName(Nan::New("BTSerialPortBinding").ToLocalChecked());
 
+    Isolate *isolate = target->GetIsolate();
+    Local<Context> ctx = isolate->GetCurrentContext();
+
     Nan::SetPrototypeMethod(t, "write", Write);
     Nan::SetPrototypeMethod(t, "read", Read);
     Nan::SetPrototypeMethod(t, "close", Close);
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
-    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction());
+    target->Set(Nan::New("BTSerialPortBinding").ToLocalChecked(), t->GetFunction(ctx).ToLocalChecked());
 }
 
 BTSerialPortBinding::BTSerialPortBinding() :
@@ -247,14 +256,14 @@ NAN_METHOD(BTSerialPortBinding::New) {
 
     const char *usage = "usage: BTSerialPortBinding(address, channelID, callback, error)";
     if (info.Length() != 4) {
-        Nan::ThrowError(usage);
+        return Nan::ThrowError(usage);
     }
 
-    String::Utf8Value address(info[0]);
+    String::Utf8Value address(info.GetIsolate(), info[0]);
 
-    int channelID = info[1]->Int32Value();
+    int channelID = info[1]->Int32Value(Nan::GetCurrentContext()).ToChecked();
     if (channelID <= 0) {
-        Nan::ThrowTypeError("ChannelID should be a positive int value.");
+        return Nan::ThrowTypeError("ChannelID should be a positive int value.");
     }
 
     BTSerialPortBinding* rfcomm = new BTSerialPortBinding();
@@ -286,12 +295,12 @@ NAN_METHOD(BTSerialPortBinding::New) {
 NAN_METHOD(BTSerialPortBinding::Write) {
     // usage
     if (info.Length() != 3) {
-        Nan::ThrowError("usage: write(buf, address, callback)");
+        return Nan::ThrowError("usage: write(buf, address, callback)");
     }
 
     // buffer
     if(!info[0]->IsObject() || !Buffer::HasInstance(info[0])) {
-        Nan::ThrowTypeError("First argument must be a buffer");
+        return Nan::ThrowTypeError("First argument must be a buffer");
     }
 
     Local<Object> bufferObject = info[0].As<Object>();
@@ -300,14 +309,14 @@ NAN_METHOD(BTSerialPortBinding::Write) {
 
     // string
     if (!info[1]->IsString()) {
-        Nan::ThrowTypeError("Second argument must be a string");
+        return Nan::ThrowTypeError("Second argument must be a string");
     }
     //NOTE: The address argument is currently only used in OSX.
     //      On linux each connection is handled by a separate object.
 
     // callback
     if(!info[2]->IsFunction()) {
-        Nan::ThrowTypeError("Third argument must be a function");
+        return Nan::ThrowTypeError("Third argument must be a function");
     }
 
     write_baton_t *baton = new write_baton_t();
@@ -340,7 +349,7 @@ NAN_METHOD(BTSerialPortBinding::Write) {
 NAN_METHOD(BTSerialPortBinding::Close) {
     const char *usage = "usage: close(address)";
     if (info.Length() != 1) {
-        Nan::ThrowError(usage);
+        return Nan::ThrowError(usage);
     }
 
     //NOTE: The address argument is currently only used in OSX.
@@ -365,7 +374,7 @@ NAN_METHOD(BTSerialPortBinding::Close) {
 NAN_METHOD(BTSerialPortBinding::Read) {
     const char *usage = "usage: read(callback)";
     if (info.Length() != 1) {
-        Nan::ThrowError(usage);
+        return Nan::ThrowError(usage);
     }
 
     Local<Function> cb = info[0].As<Function>();
